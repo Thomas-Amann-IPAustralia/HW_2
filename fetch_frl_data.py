@@ -2,79 +2,75 @@ import requests
 import json
 import logging
 import sys
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # --- CONFIGURATION ---
 BASE_URL = "https://api.prod.legislation.gov.au/v1/documents"
-TARGET_ID = "C2024C00545"
-OUTPUT_JSON = "legislation_metadata.json"
-LOG_FILE = "download_log.txt"
+OUTPUT_FILE = "legislation_data.json"
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("FRL_Hunter")
+# List your Register IDs here
+TARGET_IDS = [
+    "C2024C00545",
+    "C2024C00455", 
+    "F2026C00009"
+]
 
-def fetch_and_download():
+# --- LOGGING SETUP ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("FRL_Sync")
+
+def get_robust_session():
     session = requests.Session()
-    session.headers.update({"accept": "application/json"})
+    retry_strategy = Retry(
+        total=5,
+        backoff_factor=2,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET"]
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("https://", adapter)
+    return session
+
+def fetch_documents():
+    session = get_robust_session()
     
-    log_entries = []
+    # Construct the OData filter
+    filter_query = " or ".join([f"registerId eq '{tid}'" for tid in TARGET_IDS])
+    params = {"$filter": filter_query}
+    
+    logger.info(f"Searching for {len(TARGET_IDS)} documents...")
 
     try:
-        # 1. Get Metadata
-        params = {"$filter": f"registerId eq '{TARGET_ID}'"}
-        response = session.get(BASE_URL, params=params)
+        response = session.get(BASE_URL, params=params, headers={"accept": "application/json"}, timeout=30)
         response.raise_for_status()
-        items = response.json().get("value", [])
+        
+        data = response.json()
+        documents = data.get("value", [])
 
-        if not items:
-            msg = f"No metadata found for {TARGET_ID}"
-            logger.error(msg)
-            log_entries.append(msg)
-        else:
-            doc_metadata = items[0]
-            with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
-                json.dump(doc_metadata, f, indent=2)
+        # --- MISSING ID CHECK ---
+        found_ids = [doc.get("registerId") for doc in documents]
+        missing_ids = [tid for tid in TARGET_IDS if tid not in found_ids]
+        
+        if missing_ids:
+            logger.warning(f"The following IDs were NOT found: {', '.join(missing_ids)}")
+        
+        if not documents:
+            logger.error("No documents found at all.")
+            return
+
+        logger.info(f"SUCCESS: Found {len(documents)} matching documents.")
+
+        with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+            json.dump(documents, f, indent=2)
             
-            # 2. Try to find the file
-            # If the ID C2024C00545 is a Register ID, the actual document ID 
-            # might be different. Let's look for 'titleId'
-            alt_id = doc_metadata.get("titleId", TARGET_ID)
-            extension = doc_metadata.get("extension", ".pdf")
-            
-            # Try the three most common OData media patterns
-            test_urls = [
-                f"{BASE_URL}('{TARGET_ID}')/$value",
-                f"{BASE_URL}('{alt_id}')/$value",
-                f"https://api.prod.legislation.gov.au/v1/files('{TARGET_ID}')/content"
-            ]
-
-            success = False
-            for url in test_urls:
-                logger.info(f"Testing URL: {url}")
-                try:
-                    with session.get(url, stream=True, timeout=30) as r:
-                        if r.status_code == 200:
-                            filename = f"{TARGET_ID}{extension}"
-                            with open(filename, 'wb') as f:
-                                for chunk in r.iter_content(chunk_size=8192):
-                                    f.write(chunk)
-                            logger.info(f"SUCCESS: Downloaded {filename} from {url}")
-                            log_entries.append(f"Successfully downloaded from {url}")
-                            success = True
-                            break
-                        else:
-                            log_entries.append(f"Failed {url} - Status {r.status_code}")
-                except Exception as e:
-                    log_entries.append(f"Error testing {url}: {str(e)}")
-
-            if not success:
-                logger.error("All download attempts failed.")
-
     except Exception as e:
-        log_entries.append(f"Critical error: {str(e)}")
-
-    # ALWAYS write a log file so the GitHub Action has something to commit
-    with open(LOG_FILE, "w") as f:
-        f.write("\n".join(log_entries))
+        logger.critical(f"Error: {str(e)}")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    fetch_and_download()
+    fetch_documents()
