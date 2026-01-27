@@ -8,9 +8,7 @@ from urllib3.util.retry import Retry
 # --- CONFIGURATION ---
 BASE_URL = "https://api.prod.legislation.gov.au/v1/documents"
 OUTPUT_FILE = "legislation_data.json"
-KEYWORDS = ["trade marks", "patents"]
-PAGE_SIZE = 50  # Confirmed server limit
-START_DATE = "1989-01-01T00:00:00"
+TARGET_COUNT = 50  # Stop once we hit this number
 
 # --- LOGGING SETUP ---
 logging.basicConfig(
@@ -21,6 +19,7 @@ logging.basicConfig(
 logger = logging.getLogger("FRL_Sync")
 
 def get_robust_session():
+    """Configures session with retries for stability."""
     session = requests.Session()
     retry_strategy = Retry(
         total=5,
@@ -32,68 +31,48 @@ def get_robust_session():
     session.mount("https://", adapter)
     return session
 
-def contains_keywords(obj):
-    """
-    Checks if keywords exist in any string value within the object.
-    We convert the whole object to a string to catch keywords in any field.
-    """
-    obj_str = json.dumps(obj).lower()
-    return any(word.lower() in obj_str for word in KEYWORDS)
-
 def fetch_frl_data():
     session = get_robust_session()
-    all_filtered_docs = []
-    skip = 0
     
-    # Using the 'start' field discovered in your logs
-    odata_filter = f"start ge {START_DATE}"
+    # Filter for authorized documents only
+    params = {
+        "$top": TARGET_COUNT,
+        "$filter": "isAuthorised eq true"
+    }
+    
+    logger.info(f"Requesting {TARGET_COUNT} authorised documents from FRL API...")
 
-    logger.info(f"Starting wholesale fetch for documents since {START_DATE}...")
-
-    while True:
-        params = {
-            "$top": PAGE_SIZE, 
-            "$skip": skip,
-            "$filter": odata_filter
-        }
+    try:
+        # 60-second timeout to give the server plenty of time to process the filter
+        response = session.get(BASE_URL, params=params, headers={"accept": "application/json"}, timeout=60)
         
-        try:
-            response = session.get(BASE_URL, params=params, headers={"accept": "application/json"}, timeout=60)
+        if not response.ok:
+            logger.error(f"API Request Failed! Status: {response.status_code}")
+            logger.error(f"Headers: {dict(response.headers)}")
+            logger.error(f"Body snippet: {response.text[:500]}")
+            sys.exit(1)
+
+        data = response.json()
+        
+        # OData standard puts results in the 'value' key
+        documents = data.get("value", [])
+
+        if not documents:
+            logger.warning("No authorised documents were returned by the API.")
+            return
+
+        # Double-check count and save
+        count = len(documents)
+        logger.info(f"Successfully retrieved {count} authorised documents.")
+
+        with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+            json.dump(documents, f, indent=2)
             
-            if not response.ok:
-                logger.error(f"API Error {response.status_code} at skip={skip}")
-                logger.error(f"Details: {response.text}")
-                break
+        logger.info(f"SUCCESS: Data saved to {OUTPUT_FILE}.")
 
-            data = response.json()
-            # As seen in discovery, items are inside the 'value' key
-            batch = data.get("value", [])
-
-            if not batch:
-                logger.info("Reached the end of the data stream.")
-                break
-
-            # Local keyword filtering
-            filtered_batch = [doc for doc in batch if contains_keywords(doc)]
-            all_filtered_docs.extend(filtered_batch)
-
-            logger.info(f"Fetched {skip + len(batch)} items total... found {len(all_filtered_docs)} matches.")
-
-            # If we got fewer items than the page size, we're done
-            if len(batch) < PAGE_SIZE:
-                break
-                
-            skip += PAGE_SIZE
-            
-        except Exception as e:
-            logger.critical(f"Connection error: {str(e)}")
-            break
-
-    # Final save to your repo
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(all_filtered_docs, f, indent=2)
-    
-    logger.info(f"DONE. Total matching documents saved: {len(all_filtered_docs)}")
+    except Exception as e:
+        logger.critical(f"A non-recoverable error occurred: {str(e)}", exc_info=True)
+        sys.exit(1)
 
 if __name__ == "__main__":
     fetch_frl_data()
