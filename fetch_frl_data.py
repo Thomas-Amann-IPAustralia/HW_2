@@ -52,68 +52,71 @@ def get_filename_from_cd(cd_header, default_name):
 
 def download_content(session, register_id):
     """
-    Downloads the binary content (bytes) for a given register ID.
-    Uses the /find endpoint which returns bytes by default.
+    Downloads the binary content. Tries PDF first, then Word.
     """
-    download_url = f"{BASE_URL}/find(registerId='{register_id}')"
+    # formats to try in order of preference
+    # Note: API uses 'word' or 'pdf' as format keys in the find function
+    formats = ["pdf", "word"]
     
-    try:
-        logger.info(f"Downloading content for {register_id}...")
-        
-        # --- FIX: Force Accept header to allow binary content ---
-        # The API returns 406 if we ask for JSON here.
-        headers = {"Accept": "*/*"} 
-        
-        response = session.get(download_url, headers=headers, stream=True, timeout=60)
-        
-        if response.status_code == 404:
-            logger.warning(f"No downloadable content found for {register_id}.")
-            return
-        
-        response.raise_for_status()
+    headers = {"Accept": "*/*"}
+    downloaded = False
 
-        # Determine filename from headers or fallback to ID + extension guess
-        content_type = response.headers.get("Content-Type", "")
-        content_disp = response.headers.get("Content-Disposition")
+    for fmt in formats:
+        # Construct URL with specific format: find(registerId='ID',format='pdf')
+        download_url = f"{BASE_URL}/find(registerId='{register_id}',format='{fmt}')"
         
-        # Default extension guess
-        ext = ".pdf" if "pdf" in content_type else ".docx"
-        filename = get_filename_from_cd(content_disp, f"{register_id}{ext}")
-        
-        filepath = os.path.join(CONTENT_DIR, filename)
+        try:
+            logger.info(f"Attempting to download {fmt.upper()} for {register_id}...")
+            response = session.get(download_url, headers=headers, stream=True, timeout=60)
+            
+            if response.status_code == 404:
+                # This specific format doesn't exist, try the next one
+                continue
+            
+            response.raise_for_status()
 
-        with open(filepath, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        
-        logger.info(f"Saved: {filename}")
+            # Determine filename
+            content_disp = response.headers.get("Content-Disposition")
+            ext = ".pdf" if fmt == "pdf" else ".docx"
+            filename = get_filename_from_cd(content_disp, f"{register_id}{ext}")
+            
+            filepath = os.path.join(CONTENT_DIR, filename)
 
-    except Exception as e:
-        logger.error(f"Failed to download text for {register_id}: {e}")
+            with open(filepath, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            logger.info(f"SUCCESS: Saved {filename}")
+            downloaded = True
+            break # Stop after finding the preferred format
+
+        except Exception as e:
+            logger.warning(f"Failed attempt for {fmt} on {register_id}: {e}")
+
+    if not downloaded:
+        logger.error(f"Could not download any content (PDF or Word) for {register_id}")
 
 def fetch_documents():
     session = get_robust_session()
     
-    # Ensure output directory exists
     if not os.path.exists(CONTENT_DIR):
         os.makedirs(CONTENT_DIR)
 
     # 1. Fetch Metadata
-    # Construct the OData filter
     filter_query = " or ".join([f"registerId eq '{tid}'" for tid in TARGET_IDS])
     params = {"$filter": filter_query}
     
     logger.info(f"Searching for metadata matches...")
 
     try:
-        # We MUST ask for JSON here to get the metadata list [cite: 8]
+        # Fetch metadata as JSON
         response = session.get(BASE_URL, params=params, headers={"Accept": "application/json"}, timeout=30)
         response.raise_for_status()
         
         data = response.json()
         documents = data.get("value", [])
 
-        # --- MISSING ID CHECK ---
+        # Check for missing IDs
         found_ids = [doc.get("registerId") for doc in documents]
         missing_ids = [tid for tid in TARGET_IDS if tid not in found_ids]
         
