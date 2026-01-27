@@ -24,14 +24,11 @@ jobs:
         run: pip install requests urllib3
 
       - name: Run Fetch Script
-        # Make sure this matches your actual python filename
         run: python fetch_frl_data.py
 
       - name: Commit and Push
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Update Legislation Data and Text"
-          # IMPORTANT: Add the new directory to the file pattern
           file_pattern: 'legislation_data.json legislative_text/*'
           skip_dirty_check: false
-          fail_on_empty: false
