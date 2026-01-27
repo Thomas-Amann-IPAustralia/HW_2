@@ -35,8 +35,9 @@ jobs:
     - name: Commit and Push changes
       uses: stefanzweifel/git-auto-commit-action@v5
       with:
-        commit_message: "FRL Data Sync: C2024C00545"
-        # Using a more flexible pattern and disabling failure if empty
-        file_pattern: 'legislation_metadata.json *.pdf *.docx *.txt'
-        disable_globbing: false
-        skip_dirty_check: false
+        commit_message: "FRL Sync attempt for C2024C00545"
+        # Removing the strict wildcards to prevent Exit 128
+        file_pattern: 'legislation_metadata.json download_log.txt *.pdf *.docx'
+        # This tells the action not to error out if no files changed
+        skip_dirty_check: false 
+        fail_on_empty: false
