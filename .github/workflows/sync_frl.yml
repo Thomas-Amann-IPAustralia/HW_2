@@ -35,6 +35,8 @@ jobs:
     - name: Commit and Push changes
       uses: stefanzweifel/git-auto-commit-action@v5
       with:
-        commit_message: "Download Document and Metadata for C2024C00545"
-        # This pattern catches the JSON and any .pdf or .docx files
-        file_pattern: 'legislation_metadata.json C2024C00545.*'
+        commit_message: "FRL Data Sync: C2024C00545"
+        # Using a more flexible pattern and disabling failure if empty
+        file_pattern: 'legislation_metadata.json *.pdf *.docx *.txt'
+        disable_globbing: false
+        skip_dirty_check: false
