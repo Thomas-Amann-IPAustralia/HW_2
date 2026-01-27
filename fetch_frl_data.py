@@ -9,8 +9,8 @@ from urllib3.util.retry import Retry
 BASE_URL = "https://api.prod.legislation.gov.au/v1/documents"
 OUTPUT_FILE = "legislation_data.json"
 KEYWORDS = ["trade marks", "patents"]
-PAGE_SIZE = 500  # Fixed: FRL limit is 500
-START_DATE = "1989-01-01T00:00:00Z"
+PAGE_SIZE = 500  # Confirmed server limit
+START_DATE = "1989-01-01T00:00:00"
 
 # --- LOGGING SETUP ---
 logging.basicConfig(
@@ -33,7 +33,10 @@ def get_robust_session():
     return session
 
 def contains_keywords(obj):
-    """Recursively checks if any string value in a JSON object contains keywords."""
+    """
+    Checks if keywords exist in any string value within the object.
+    We convert the whole object to a string to catch keywords in any field.
+    """
     obj_str = json.dumps(obj).lower()
     return any(word.lower() in obj_str for word in KEYWORDS)
 
@@ -42,11 +45,10 @@ def fetch_frl_data():
     all_filtered_docs = []
     skip = 0
     
-    # We apply the date filter directly in the API call to reduce the data we have to download
-    # registrationDate is the standard field for FRL OData queries
-    odata_filter = f"registrationDate ge {START_DATE}"
+    # Using the 'start' field discovered in your logs
+    odata_filter = f"start ge {START_DATE}"
 
-    logger.info(f"Initiating FRL API fetch (Documents since {START_DATE})...")
+    logger.info(f"Starting wholesale fetch for documents since {START_DATE}...")
 
     while True:
         params = {
@@ -56,44 +58,42 @@ def fetch_frl_data():
         }
         
         try:
-            response = session.get(BASE_URL, params=params, headers={"accept": "application/json"}, timeout=30)
+            response = session.get(BASE_URL, params=params, headers={"accept": "application/json"}, timeout=60)
             
             if not response.ok:
-                logger.error(f"Request Failed! Status: {response.status_code}")
-                logger.error(f"Body: {response.text}")
+                logger.error(f"API Error {response.status_code} at skip={skip}")
+                logger.error(f"Details: {response.text}")
                 break
 
             data = response.json()
-            # FRL usually wraps results in a 'value' or 'items' key for OData
-            batch = data.get("value", []) if isinstance(data, dict) else data
+            # As seen in discovery, items are inside the 'value' key
+            batch = data.get("value", [])
 
             if not batch:
-                logger.info("Reached the end of the Register.")
+                logger.info("Reached the end of the data stream.")
                 break
 
-            # Filter locally for keywords
+            # Local keyword filtering
             filtered_batch = [doc for doc in batch if contains_keywords(doc)]
             all_filtered_docs.extend(filtered_batch)
 
-            logger.info(f"Processed {skip + len(batch)} total items... (Found {len(all_filtered_docs)} matches)")
+            logger.info(f"Fetched {skip + len(batch)} items total... found {len(all_filtered_docs)} matches.")
 
-            # If we got less than the PAGE_SIZE, we've hit the end of the server's list
+            # If we got fewer items than the page size, we're done
             if len(batch) < PAGE_SIZE:
                 break
                 
             skip += PAGE_SIZE
             
         except Exception as e:
-            logger.critical(f"Fatal error: {str(e)}", exc_info=True)
-            sys.exit(1)
+            logger.critical(f"Connection error: {str(e)}")
+            break
 
-    # Save to file
-    if all_filtered_docs:
-        with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-            json.dump(all_filtered_docs, f, indent=2)
-        logger.info(f"SUCCESS: {len(all_filtered_docs)} documents matching criteria saved to {OUTPUT_FILE}")
-    else:
-        logger.warning("No documents found matching those keywords since 1989.")
+    # Final save to your repo
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        json.dump(all_filtered_docs, f, indent=2)
+    
+    logger.info(f"DONE. Total matching documents saved: {len(all_filtered_docs)}")
 
 if __name__ == "__main__":
     fetch_frl_data()
