@@ -31,3 +31,10 @@ jobs:
       with:
         commit_message: "Automated FRL Update: Trade Marks & Patents"
         file_pattern: 'legislation_data.json'
+        
+    - name: Commit and Push changes
+      uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        commit_message: "Download Document and Metadata for C2024C00545"
+        # This pattern catches the JSON and any .pdf or .docx files
+        file_pattern: 'legislation_metadata.json C2024C00545.*'
