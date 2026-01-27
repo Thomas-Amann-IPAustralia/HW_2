@@ -8,7 +8,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # --- CONFIGURATION ---
-BASE_URL = "https://api.prod.legislation.gov.au/v1/documents"
+BASE_URL = "https://api.prod.legislation.gov.au/v1"
 OUTPUT_FILE = "legislation_data.json"
 CONTENT_DIR = "legislative_text"
 
@@ -52,49 +52,48 @@ def get_filename_from_cd(cd_header, default_name):
 
 def download_content(session, register_id):
     """
-    Downloads the binary content. Tries PDF first, then Word.
+    Downloads the binary content using the direct Content endpoint.
     """
-    # formats to try in order of preference
-    # Note: API uses 'word' or 'pdf' as format keys in the find function
-    formats = ["pdf", "word"]
+    #  GET /v1/Content({key}) Returns a content document.
+    # We use parentheses as per OData convention seen in error logs.
+    download_url = f"{BASE_URL}/Content('{register_id}')"
     
-    headers = {"Accept": "*/*"}
-    downloaded = False
-
-    for fmt in formats:
-        # Construct URL with specific format: find(registerId='ID',format='pdf')
-        download_url = f"{BASE_URL}/find(registerId='{register_id}',format='{fmt}')"
+    try:
+        logger.info(f"Downloading content for {register_id}...")
         
-        try:
-            logger.info(f"Attempting to download {fmt.upper()} for {register_id}...")
-            response = session.get(download_url, headers=headers, stream=True, timeout=60)
-            
-            if response.status_code == 404:
-                # This specific format doesn't exist, try the next one
-                continue
-            
-            response.raise_for_status()
+        # We explicitly accept ANY type (*/*) so we don't trigger a 406 error
+        # when the server tries to give us a PDF/Word doc.
+        response = session.get(download_url, headers={"Accept": "*/*"}, stream=True, timeout=60)
+        
+        if response.status_code == 404:
+            logger.warning(f"No content found for {register_id} (404).")
+            return
+        
+        response.raise_for_status()
 
-            # Determine filename
-            content_disp = response.headers.get("Content-Disposition")
-            ext = ".pdf" if fmt == "pdf" else ".docx"
-            filename = get_filename_from_cd(content_disp, f"{register_id}{ext}")
-            
-            filepath = os.path.join(CONTENT_DIR, filename)
+        # Determine filename from headers
+        content_disp = response.headers.get("Content-Disposition")
+        content_type = response.headers.get("Content-Type", "")
+        
+        # Fallback extension if header is missing
+        if "pdf" in content_type:
+            ext = ".pdf"
+        elif "word" in content_type or "officedocument" in content_type:
+            ext = ".docx"
+        else:
+            ext = ".bin"
 
-            with open(filepath, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            
-            logger.info(f"SUCCESS: Saved {filename}")
-            downloaded = True
-            break # Stop after finding the preferred format
+        filename = get_filename_from_cd(content_disp, f"{register_id}{ext}")
+        filepath = os.path.join(CONTENT_DIR, filename)
 
-        except Exception as e:
-            logger.warning(f"Failed attempt for {fmt} on {register_id}: {e}")
+        with open(filepath, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        
+        logger.info(f"SUCCESS: Saved {filename}")
 
-    if not downloaded:
-        logger.error(f"Could not download any content (PDF or Word) for {register_id}")
+    except Exception as e:
+        logger.error(f"Failed to download content for {register_id}: {e}")
 
 def fetch_documents():
     session = get_robust_session()
@@ -102,7 +101,9 @@ def fetch_documents():
     if not os.path.exists(CONTENT_DIR):
         os.makedirs(CONTENT_DIR)
 
-    # 1. Fetch Metadata
+    # 1. Fetch Metadata using the Documents endpoint
+    # [cite: 8] GET /v1/documents
+    search_url = f"{BASE_URL}/documents"
     filter_query = " or ".join([f"registerId eq '{tid}'" for tid in TARGET_IDS])
     params = {"$filter": filter_query}
     
@@ -110,13 +111,13 @@ def fetch_documents():
 
     try:
         # Fetch metadata as JSON
-        response = session.get(BASE_URL, params=params, headers={"Accept": "application/json"}, timeout=30)
+        response = session.get(search_url, params=params, headers={"Accept": "application/json"}, timeout=30)
         response.raise_for_status()
         
         data = response.json()
         documents = data.get("value", [])
 
-        # Check for missing IDs
+        # Check for missing IDs (just for logging)
         found_ids = [doc.get("registerId") for doc in documents]
         missing_ids = [tid for tid in TARGET_IDS if tid not in found_ids]
         
