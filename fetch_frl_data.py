@@ -9,7 +9,7 @@ from urllib3.util.retry import Retry
 BASE_URL = "https://api.prod.legislation.gov.au/v1/documents"
 OUTPUT_FILE = "legislation_data.json"
 KEYWORDS = ["trade marks", "patents"]
-PAGE_SIZE = 500  # Confirmed server limit
+PAGE_SIZE = 50  # Confirmed server limit
 START_DATE = "1989-01-01T00:00:00"
 
 # --- LOGGING SETUP ---
