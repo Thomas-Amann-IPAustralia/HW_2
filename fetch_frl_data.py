@@ -55,13 +55,16 @@ def download_content(session, register_id):
     Downloads the binary content (bytes) for a given register ID.
     Uses the /find endpoint which returns bytes by default.
     """
-    # Using the 'find' endpoint as per API docs 
-    # This endpoint returns the document bytes by default.
     download_url = f"{BASE_URL}/find(registerId='{register_id}')"
     
     try:
         logger.info(f"Downloading content for {register_id}...")
-        response = session.get(download_url, stream=True, timeout=60)
+        
+        # --- FIX: Force Accept header to allow binary content ---
+        # The API returns 406 if we ask for JSON here.
+        headers = {"Accept": "*/*"} 
+        
+        response = session.get(download_url, headers=headers, stream=True, timeout=60)
         
         if response.status_code == 404:
             logger.warning(f"No downloadable content found for {register_id}.")
@@ -103,7 +106,8 @@ def fetch_documents():
     logger.info(f"Searching for metadata matches...")
 
     try:
-        response = session.get(BASE_URL, params=params, headers={"accept": "application/json"}, timeout=30)
+        # We MUST ask for JSON here to get the metadata list [cite: 8]
+        response = session.get(BASE_URL, params=params, headers={"Accept": "application/json"}, timeout=30)
         response.raise_for_status()
         
         data = response.json()
