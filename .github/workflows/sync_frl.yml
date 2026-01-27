@@ -1,9 +1,9 @@
 name: Sync FRL Documents
 
 on:
-  workflow_dispatch: # Allows manual trigger
+  workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *' # Optional: runs daily at midnight
+    - cron: '0 0 * * *'
 
 jobs:
   build:
@@ -24,14 +24,14 @@ jobs:
         run: pip install requests urllib3
 
       - name: Run Fetch Script
+        # Make sure this matches your actual python filename
         run: python fetch_frl_data.py
 
       - name: Commit and Push
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Update Legislation Data and Text Snapshots"
-          # Target the JSON file AND the new directory
+          commit_message: "Update Legislation Data and Text"
+          # IMPORTANT: Add the new directory to the file pattern
           file_pattern: 'legislation_data.json legislative_text/*'
-          # If the file hasn't changed, don't error out
           skip_dirty_check: false
           fail_on_empty: false
