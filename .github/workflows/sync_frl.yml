@@ -1,43 +1,37 @@
-name: Sync FRL Data
+name: Sync FRL Documents
 
 on:
+  workflow_dispatch: # Allows manual trigger
   schedule:
-    - cron: '0 0 * * *'
-  workflow_dispatch:
+    - cron: '0 0 * * *' # Optional: runs daily at midnight
 
 jobs:
-  run-sync:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout Repo
+        uses: actions/checkout@v4
 
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
 
-    - name: Install Dependencies
-      run: pip install requests urllib3
+      - name: Install Dependencies
+        run: pip install requests urllib3
 
-    - name: Run Fetch Script
-      run: python fetch_frl_data.py
+      - name: Run Fetch Script
+        run: python fetch_frl_data.py
 
-    - name: Commit Results
-      uses: stefanzweifel/git-auto-commit-action@v5
-      with:
-        commit_message: "Automated FRL Update: Trade Marks & Patents"
-        file_pattern: 'legislation_data.json'
-        
-    - name: Commit and Push changes
-      uses: stefanzweifel/git-auto-commit-action@v5
-      with:
-        commit_message: "FRL Sync attempt for C2024C00545"
-        # Removing the strict wildcards to prevent Exit 128
-        file_pattern: 'legislation_metadata.json download_log.txt *.pdf *.docx'
-        # This tells the action not to error out if no files changed
-        skip_dirty_check: false 
-        fail_on_empty: false
+      - name: Commit and Push
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Update Legislation Data"
+          # Only target the JSON file to prevent "pathspec" crashes
+          file_pattern: 'legislation_data.json'
+          # If the file hasn't changed, don't error out
+          skip_dirty_check: false
+          fail_on_empty: false
