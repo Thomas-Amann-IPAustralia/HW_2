@@ -29,9 +29,9 @@ jobs:
       - name: Commit and Push
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Update Legislation Data"
-          # Only target the JSON file to prevent "pathspec" crashes
-          file_pattern: 'legislation_data.json'
+          commit_message: "Update Legislation Data and Text Snapshots"
+          # Target the JSON file AND the new directory
+          file_pattern: 'legislation_data.json legislative_text/*'
           # If the file hasn't changed, don't error out
           skip_dirty_check: false
           fail_on_empty: false
